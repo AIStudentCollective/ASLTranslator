@@ -1,4 +1,3 @@
-ASL Translator Project
+# ASL Translator Project
 
-
-Team: Ruhi, Liza, Ameen, Adi, Sahil
+## Team: Ruhi, Liza, Ameen, Adi, Sahil
