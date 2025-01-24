@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ASL Gesture Recognition</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+        #webcam { width: 640px; height: 480px; border: 2px solid #333; }
+        #prediction { 
+            margin-top: 20px; 
+            font-size: 24px; 
+            font-weight: bold;
+            height: 30px;
+        }
+    </style>
+</head>
+<body>
+    <h1>ASL Gesture Recognition</h1>
+    <video id="webcam" autoplay playsinline></video>
+    <div id="prediction">Loading...</div>
+
+    <script>
+        const socket = io('http://localhost:8080');
+        const video = document.getElementById('webcam');
+        const predictionDiv = document.getElementById('prediction');
+        let lastGesture = '';
+        let lastUpdate = 0;
+
+        // Throttle frame rate (100ms between frames)
+        const frameInterval = 100;
+        let lastFrameTime = 0;
+
+        navigator.mediaDevices.getUserMedia({ 
+            video: { 
+                width: { ideal: 640 }, 
+                height: { ideal: 480 },
+                frameRate: { ideal: 10, max: 15 }
+            } 
+        }).then(stream => {
+            video.srcObject = stream;
+            startProcessing();
+        }).catch(err => {
+            predictionDiv.textContent = 'Error accessing webcam: ' + err.message;
+        });
+
+        socket.on('prediction', (data) => {
+            if (data.error) {
+                predictionDiv.textContent = `Error: ${data.error}`;
+            } else {
+                const now = Date.now();
+                // Only update if gesture changed or every 500ms
+                if (data.gesture !== lastGesture || now - lastUpdate > 500) {
+                    lastGesture = data.gesture;
+                    lastUpdate = now;
+                    predictionDiv.textContent = `Gesture: ${data.gesture}`;
+                }
+            }
+        });
+
+        function startProcessing() {
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+
+            function processFrame() {
+                const now = Date.now();
+                if (now - lastFrameTime >= frameInterval) {
+                    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                        context.drawImage(video, 0, 0);
+                        
+                        const imageData = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+                        socket.emit('frame', imageData);
+                        lastFrameTime = now;
+                    }
+                }
+                requestAnimationFrame(processFrame);
+            }
+            
+            processFrame();
+        }
+    </script>
+</body>
+</html>
