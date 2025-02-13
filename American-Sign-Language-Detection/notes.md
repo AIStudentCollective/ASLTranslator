@@ -1,0 +1,2 @@
+- For the backend we want to capture video frames over an interval from frontend , send video frames to backend to process and handle with sockets/ webrtc calling the model for recognizing the gesture and returning the letter shown.
+- https://github.com/miguelgrinberg/flask-socketio
