@@ -1,0 +1,8 @@
+flask 
+flask-socketio 
+opencv-python
+joblib
+scikit-learn
+xgboost
+numpy
+mediapipe
