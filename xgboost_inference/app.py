@@ -1,312 +1,235 @@
-from flask import Flask
-from flask_socketio import SocketIO, emit
+from flask import Flask, request, jsonify, render_template
 import numpy as np
-import json
-import joblib
-import base64
-import cv2
 import mediapipe as mp
-import os
+import cv2
+import base64
+import joblib
 from sklearn.base import BaseEstimator, TransformerMixin
-import xgboost as xgb
+import re
 
-# Initialize Flask app and SocketIO
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*", ping_timeout=60)
 
 # Constants
 NUM_FRAMES = 120
-FEATURES_PER_FRAME = 134  # 25 pose_x + 25 pose_y + 21 hand1_x + 21 hand1_y + 21 hand2_x + 21 hand2_y
+FEATURES_PER_FRAME = 134  # 33*2 (pose) + 21*2 (hand1) + 21*2 (hand2)
 
-print("Starting application...")
-
-# Initialize MediaPipe Pose and Hands
-mp_pose = mp.solutions.pose
-mp_hands = mp.solutions.hands
-
-pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
-hands = mp_hands.Hands(min_detection_confidence=0.5, min_tracking_confidence=0.5)
-
-# Optional center crop function for preprocessing frames
-def center_crop(frame, crop_fraction=0.4):
-    """
-    Crops the center of the frame to a specified fraction of its original size.
-    
-    Args:
-        frame: Input frame as a numpy array (height, width, channels).
-        crop_fraction: Fraction of original size to crop to (default 0.4).
-    
-    Returns:
-        Cropped frame.
-    """
-    h, w, _ = frame.shape
-    new_w = int(w * crop_fraction)
-    new_h = int(h * crop_fraction)
-    start_x = (w - new_w) // 2
-    start_y = (h - new_h) // 2
-    return frame[start_y:start_y+new_h, start_x:start_x+new_w]
-
-# Keypoint extraction function
-def extract_keypoints(frame):
-    """
-    Extracts keypoints from a frame using MediaPipe Pose and Hands.
-    
-    Args:
-        frame: Input frame as a numpy array.
-    
-    Returns:
-        Dictionary containing pose and hand keypoints (x, y coordinates).
-    """
-    # Optionally apply center crop (uncomment to enable)
-    # frame = center_crop(frame)
-
-    image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    pose_results = pose.process(image)
-    hand_results = hands.process(image)
-
-    keypoints = {
-        'pose_x': [], 'pose_y': [],
-        'hand1_x': [], 'hand1_y': [],
-        'hand2_x': [], 'hand2_y': []
-    }
-
-    # Extract pose landmarks (first 25)
-    if pose_results.pose_landmarks:
-        for i, landmark in enumerate(pose_results.pose_landmarks.landmark[:25]):
-            keypoints['pose_x'].append(landmark.x)
-            keypoints['pose_y'].append(landmark.y)
-    else:
-        keypoints['pose_x'] = [np.nan] * 25
-        keypoints['pose_y'] = [np.nan] * 25
-
-    # Extract hand landmarks
-    if hand_results.multi_hand_landmarks:
-        if len(hand_results.multi_hand_landmarks) > 0:
-            for landmark in hand_results.multi_hand_landmarks[0].landmark:
-                keypoints['hand1_x'].append(landmark.x)
-                keypoints['hand1_y'].append(landmark.y)
-        if len(hand_results.multi_hand_landmarks) > 1:
-            for landmark in hand_results.multi_hand_landmarks[1].landmark:
-                keypoints['hand2_x'].append(landmark.x)
-                keypoints['hand2_y'].append(landmark.y)
-
-    # Pad missing hand landmarks with np.nan
-    if not keypoints['hand1_x']:
-        keypoints['hand1_x'] = [np.nan] * 21
-        keypoints['hand1_y'] = [np.nan] * 21
-    if not keypoints['hand2_x']:
-        keypoints['hand2_x'] = [np.nan] * 21
-        keypoints['hand2_y'] = [np.nan] * 21
-
-    return keypoints
-
-# Process frames and predict gesture
-def process_frames(frames):
-    """
-    Processes a list of frames to extract keypoints and predict a gesture.
-    
-    Args:
-        frames: List of frames as numpy arrays.
-    
-    Returns:
-        Prediction from the pipeline (integer label).
-    """
-    print(f"Processing {len(frames)} frames")
-
-    keypoints = {
-        'pose_x': [], 'pose_y': [],
-        'hand1_x': [], 'hand1_y': [],
-        'hand2_x': [], 'hand2_y': []
-    }
-
-    for i, frame in enumerate(frames):
-        print(f"Processing frame {i+1}/{len(frames)}")
-        frame_keypoints = extract_keypoints(frame)
-        keypoints['pose_x'].append(frame_keypoints['pose_x'])
-        keypoints['pose_y'].append(frame_keypoints['pose_y'])
-        keypoints['hand1_x'].append(frame_keypoints['hand1_x'])
-        keypoints['hand1_y'].append(frame_keypoints['hand1_y'])
-        keypoints['hand2_x'].append(frame_keypoints['hand2_x'])
-        keypoints['hand2_y'].append(frame_keypoints['hand2_y'])
-
-    # Pad or truncate to NUM_FRAMES
-    for key in keypoints:
-        current_len = len(keypoints[key])
-        if current_len < NUM_FRAMES:
-            print(f"Padding {key} from {current_len} to {NUM_FRAMES} frames")
-            keypoints[key].extend([[np.nan] * len(keypoints[key][0]) for _ in range(NUM_FRAMES - current_len)])
-        elif current_len > NUM_FRAMES:
-            print(f"Truncating {key} from {current_len} to {NUM_FRAMES} frames")
-            keypoints[key] = keypoints[key][:NUM_FRAMES]
-
-    # Save keypoints to a temporary JSON file
-    temp_json_path = 'temp_keypoints.json'
-    with open(temp_json_path, 'w') as f:
-        json.dump(keypoints, f)
-
-    print(f"Saved keypoints to {temp_json_path}")
-
-    # Use the pipeline to predict
-    print("Running prediction with pipeline...")
-    prediction = pipeline.predict([temp_json_path])
-    print(f"Raw prediction: {prediction}")
-
-    # Clean up the temporary file
-    if os.path.exists(temp_json_path):
-        os.remove(temp_json_path)
-        print(f"Removed temporary file {temp_json_path}")
-
-    return prediction[0]
-
-# Keypoint feature extraction classes and functions
-def load_keypoints(json_path):
-    """
-    Loads keypoints from a JSON file.
-    
-    Args:
-        json_path: Path to the JSON file.
-    
-    Returns:
-        Dictionary of keypoints.
-    """
-    with open(json_path, "r") as f:
-        data = json.load(f)
-    return data
-
-def create_feature_vector(data, num_frames=NUM_FRAMES):
-    """
-    Creates a flattened feature vector from keypoints.
-    
-    Args:
-        data: Dictionary of keypoints.
-        num_frames: Number of frames to process (default NUM_FRAMES).
-    
-    Returns:
-        Flattened numpy array of features.
-    """
-    pose_x = data.get("pose_x", [])
-    pose_y = data.get("pose_y", [])
-    hand1_x = data.get("hand1_x", [])
-    hand1_y = data.get("hand1_y", [])
-    hand2_x = data.get("hand2_x", [])
-    hand2_y = data.get("hand2_y", [])
-
-    total_frames = len(pose_x)
-    features = []
-
-    for i in range(num_frames):
-        if i < total_frames:
-            frame_features = (
-                pose_x[i] + pose_y[i] +
-                hand1_x[i] + hand1_y[i] +
-                hand2_x[i] + hand2_y[i]
-            )
-            # Ensure exactly FEATURES_PER_FRAME features
-            if len(frame_features) > FEATURES_PER_FRAME:
-                frame_features = frame_features[:FEATURES_PER_FRAME]
-            elif len(frame_features) < FEATURES_PER_FRAME:
-                frame_features += [np.nan] * (FEATURES_PER_FRAME - len(frame_features))
-        else:
-            frame_features = [np.nan] * FEATURES_PER_FRAME
-        features.append(frame_features)
-
-    return np.array(features).flatten()
-
+# Feature extractor class needed for the pipeline
 class KeypointFeatureExtractor(BaseEstimator, TransformerMixin):
-    """Custom transformer to extract features from keypoints."""
     def __init__(self, num_frames=NUM_FRAMES):
         self.num_frames = num_frames
-
+    
     def fit(self, X, y=None):
         return self
-
+    
     def transform(self, X, y=None):
-        all_features = []
-        for path in X:
-            data = load_keypoints(path)
-            feat_vector = create_feature_vector(data, self.num_frames)
-            all_features.append(feat_vector)
-        return np.array(all_features)
+        # During inference, we'll create feature vectors differently
+        # This is just for pipeline compatibility
+        return np.array(X)
 
-# Load the trained pipeline
-print("Loading pipeline...")
-try:
-    pipeline = joblib.load('asl_pipeline.joblib')
-    print("Pipeline loaded successfully")
-    print(f"Pipeline steps: {[name for name, _ in pipeline.steps]}")
-except Exception as e:
-    print(f"Error loading pipeline: {str(e)}")
-    import traceback
-    traceback.print_exc()
-    raise
+# Load the pre-trained pipeline
+pipeline = joblib.load('asl_pipeline.joblib')
 
-# Flask routes and Socket.IO handlers
+# Initialize MediaPipe
+mp_holistic = mp.solutions.holistic
+holistic = mp_holistic.Holistic(
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5,
+    model_complexity=1
+)
+
+def base64_to_image(base64_string):
+    """Convert base64 string to numpy array image."""
+    # Remove the "data:image/jpeg;base64," prefix if present
+    if "base64," in base64_string:
+        base64_string = base64_string.split("base64,")[1]
+    
+    # Decode base64 string to bytes
+    img_bytes = base64.b64decode(base64_string)
+    
+    # Convert bytes to numpy array
+    img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+    
+    # Decode the numpy array as an image
+    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+    
+    return img
+
+def process_frame(frame):
+    """Extract landmarks from a single frame using MediaPipe."""
+    # Convert BGR to RGB
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    
+    # Process the frame
+    results = holistic.process(frame_rgb)
+    
+    # Initialize arrays for landmarks
+    pose_x = np.zeros(33)  # 33 pose landmarks
+    pose_y = np.zeros(33)
+    hand1_x = np.zeros(21)  # 21 hand landmarks
+    hand1_y = np.zeros(21)
+    hand2_x = np.zeros(21)
+    hand2_y = np.zeros(21)
+    
+    # Extract pose landmarks (only first 33 landmarks)
+    if results.pose_landmarks:
+        for idx, landmark in enumerate(results.pose_landmarks.landmark[:33]):
+            pose_x[idx] = landmark.x
+            pose_y[idx] = landmark.y
+    
+    # Extract hand landmarks (only first 21 landmarks per hand)
+    if results.left_hand_landmarks:
+        for idx, landmark in enumerate(results.left_hand_landmarks.landmark[:21]):
+            hand1_x[idx] = landmark.x
+            hand1_y[idx] = landmark.y
+            
+    if results.right_hand_landmarks:
+        for idx, landmark in enumerate(results.right_hand_landmarks.landmark[:21]):
+            hand2_x[idx] = landmark.x
+            hand2_y[idx] = landmark.y
+    
+    # Convert numpy arrays to lists and ensure all values are float
+    return {
+        'pose_x': pose_x.astype(float).tolist(),
+        'pose_y': pose_y.astype(float).tolist(),
+        'hand1_x': hand1_x.astype(float).tolist(),
+        'hand1_y': hand1_y.astype(float).tolist(),
+        'hand2_x': hand2_x.astype(float).tolist(),
+        'hand2_y': hand2_y.astype(float).tolist()
+    }
+
+def create_feature_vector(landmarks_data):
+    """Create a feature vector from the landmarks data."""
+    # Convert all landmark lists to numpy arrays first
+    for key in landmarks_data:
+        landmarks_data[key] = [np.array(frame, dtype=float) for frame in landmarks_data[key]]
+    
+    # Print initial frame count
+    print(f"Initial frame count: {len(landmarks_data['pose_x'])}")
+    
+    # Ensure we have NUM_FRAMES frames
+    num_frames = len(landmarks_data['pose_x'])
+    if num_frames < NUM_FRAMES:
+        # Pad with NaN if we have fewer frames
+        pad_length = NUM_FRAMES - num_frames
+        for key in landmarks_data:
+            landmarks_data[key].extend([np.full_like(landmarks_data[key][0], np.nan)] * pad_length)
+    elif num_frames > NUM_FRAMES:
+        # Truncate if we have more frames
+        for key in landmarks_data:
+            landmarks_data[key] = landmarks_data[key][:NUM_FRAMES]
+    
+    print(f"After frame adjustment: {len(landmarks_data['pose_x'])} frames")
+    
+    # Flatten the features
+    feature_vector = []
+    for i in range(NUM_FRAMES):
+        frame_features = []
+        # Pose landmarks (33 points * 2 coordinates = 66 features)
+        pose_x = landmarks_data['pose_x'][i][:33]  # Ensure 33 points
+        pose_y = landmarks_data['pose_y'][i][:33]  # Ensure 33 points
+        # Hand 1 landmarks (21 points * 2 coordinates = 42 features)
+        hand1_x = landmarks_data['hand1_x'][i][:21]  # Ensure 21 points
+        hand1_y = landmarks_data['hand1_y'][i][:21]  # Ensure 21 points
+        # Hand 2 landmarks (21 points * 2 coordinates = 42 features)
+        hand2_x = landmarks_data['hand2_x'][i][:21]  # Ensure 21 points
+        hand2_y = landmarks_data['hand2_y'][i][:21]  # Ensure 21 points
+        
+        # Print dimensions for first frame
+        if i == 0:
+            print(f"Frame 0 feature dimensions:")
+            print(f"- Pose X: {len(pose_x)}, Pose Y: {len(pose_y)}")
+            print(f"- Hand1 X: {len(hand1_x)}, Hand1 Y: {len(hand1_y)}")
+            print(f"- Hand2 X: {len(hand2_x)}, Hand2 Y: {len(hand2_y)}")
+        
+        frame_features.extend(pose_x)
+        frame_features.extend(pose_y)
+        frame_features.extend(hand1_x)
+        frame_features.extend(hand1_y)
+        frame_features.extend(hand2_x)
+        frame_features.extend(hand2_y)
+        
+        if i == 0:
+            print(f"Frame 0 total features: {len(frame_features)}")
+        
+        feature_vector.extend(frame_features)
+    
+    # Convert to numpy array, replace inf/-inf with nan, then replace nan with 0
+    feature_vector = np.array(feature_vector, dtype=float)
+    feature_vector = np.nan_to_num(feature_vector, nan=0.0, posinf=0.0, neginf=0.0)
+    
+    # Verify feature vector size
+    expected_size = NUM_FRAMES * FEATURES_PER_FRAME  # Should be 120 * 134 = 16080
+    actual_size = len(feature_vector)
+    if actual_size != expected_size:
+        print(f"Warning: Feature vector size mismatch. Expected {expected_size}, got {actual_size}")
+        print(f"Features per frame: {actual_size / NUM_FRAMES}")
+        # Pad or truncate if necessary
+        if actual_size < expected_size:
+            feature_vector = np.pad(feature_vector, (0, expected_size - actual_size))
+        else:
+            feature_vector = feature_vector[:expected_size]
+    
+    return feature_vector.reshape(1, -1)
+
 @app.route('/')
 def index():
-    """Serves the index.html file."""
-    return open('index.html').read()
+    return render_template('index.html')
 
-@socketio.on('connect')
-def handle_connect():
-    """Handles client connection."""
-    print('Client connected')
-
-@socketio.on('disconnect')
-def handle_disconnect():
-    """Handles client disconnection."""
-    print('Client disconnected')
-
-@socketio.on('video_frames')
-def handle_video_frames(data):
-    """Processes video frames received from the client and emits a prediction."""
-    print(f"Received video_frames event with {len(data.get('frames', []))} frames")
-
+@app.route('/predict', methods=['POST'])
+def predict():
     try:
-        frames = []
-        for i, frame_data in enumerate(data['frames']):
-            try:
-                if ',' in frame_data:
-                    frame_data = frame_data.split(',')[1]
-                frame_bytes = base64.b64decode(frame_data)
-                nparr = np.frombuffer(frame_bytes, np.uint8)
-                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                if frame is None:
-                    print(f"Failed to decode frame {i}")
-                    continue
-                print(f"Frame {i} decoded, shape: {frame.shape}")
-                frames.append(frame)
-            except Exception as e:
-                print(f"Error processing frame {i}: {str(e)}")
-
-        print(f"Successfully processed {len(frames)} frames")
-
+        # Get frames from request
+        data = request.json
+        frames = data.get('frames', [])
+        
         if not frames:
-            print("No valid frames received")
-            emit('prediction', {'result': 'No valid frames received', 'error': True})
-            return
-
-        prediction = process_frames(frames)
-        print(f"Model prediction: {prediction}")
-
-        # Map prediction to gesture
-        gesture_map = {0: 'hello', 1: 'good morning', 2: 'how are you'}
-        result = gesture_map.get(int(prediction), 'unknown')
-
-        emit('prediction', {'result': result})
-        print(f"Emitted prediction: {result}")
-
+            return jsonify({'error': 'No frames received'}), 400
+        
+        # Process each frame to extract landmarks
+        all_landmarks = {
+            'pose_x': [], 'pose_y': [],
+            'hand1_x': [], 'hand1_y': [],
+            'hand2_x': [], 'hand2_y': []
+        }
+        
+        for frame_base64 in frames:
+            # Convert base64 to image
+            frame = base64_to_image(frame_base64)
+            
+            # Extract landmarks
+            frame_landmarks = process_frame(frame)
+            
+            # Collect landmarks
+            for key in all_landmarks:
+                all_landmarks[key].append(frame_landmarks[key])
+        
+        # Create feature vector
+        X = create_feature_vector(all_landmarks)
+        
+        # Make prediction
+        prediction = pipeline.predict(X)[0]
+        probabilities = pipeline.predict_proba(X)[0]
+        confidence = float(probabilities[prediction])  # Convert numpy float to Python float
+        
+        # Map prediction index to label
+        label_map = {
+            0: 'alright',
+            1: 'goodafternoon',
+            2: 'goodmorning',
+            3: 'hello',
+            4: 'howareyou'
+        }
+        
+        predicted_label = label_map[prediction]
+        
+        return jsonify({
+            'prediction': predicted_label,
+            'confidence': confidence
+        })
+        
     except Exception as e:
-        print(f"Error in handle_video_frames: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        emit('prediction', {'result': f'Error: {str(e)}', 'error': True})
+        print(f"Error in prediction: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
-# Run the server
 if __name__ == '__main__':
-    print("Starting server...")
-    try:
-        socketio.run(app, host='0.0.0.0', port=8080, debug=True)
-    finally:
-        print("Closing MediaPipe...")
-        pose.close()
-        hands.close()
+    app.run(debug=True)
