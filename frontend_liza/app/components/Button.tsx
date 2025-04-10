@@ -8,12 +8,12 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ children, fullWidth = false, className, ...props }, ref) => {
+  ({ children, className, fullWidth = false, ...props }, ref) => {
     return (
       <button
         ref={ref}
         className={clsx(
-          "px-4 py-2 bg-blue-500 text-white font-semibold rounded-lg shadow-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-opacity-75 transition",
+          "bg-blue-200 text-black font-medium py-2 px-4 rounded-md shadow hover:bg-blue-300 transition",
           fullWidth && "w-full",
           className
         )}
