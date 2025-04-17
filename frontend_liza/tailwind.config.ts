@@ -11,13 +11,14 @@ export default {
       colors: {
         background: "var(--background)",
         foreground: "var(--foreground)",
-        primary: "#2563eb", // Custom Primary Blue
-        secondary: "#9333ea", // Custom Secondary Purple
-        accent: "#f97316", // Accent Orange
+        primary: "#2563eb", 
+        secondary: "#9333ea", 
+        accent: "#f97316",
       },
       fontFamily: {
         sans: ["Inter", "sans-serif"],
         mono: ["Fira Code", "monospace"],
+        poppins: ["Poppins", "sans-serif"], 
       },
       spacing: {
         "128": "32rem",
@@ -48,9 +49,9 @@ export default {
     },
   },
   plugins: [
-    require("@tailwindcss/forms"), // Better form styles
-    require("@tailwindcss/typography"), // Better text readability
-    require("@tailwindcss/aspect-ratio"), // Easier aspect ratios
+    require("@tailwindcss/forms"), 
+    require("@tailwindcss/typography"), 
+    require("@tailwindcss/aspect-ratio"), 
   ],
-  darkMode: "class", // Enable dark mode with 'class'
+  darkMode: "class", 
 } satisfies Config;
