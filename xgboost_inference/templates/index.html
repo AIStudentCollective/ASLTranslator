@@ -1,156 +1,113 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>ASL Greeting Recognition</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASL Sign Recognition</title>
     <style>
-        body { 
-            font-family: sans-serif; 
-            display: flex; 
-            flex-direction: column; 
-            align-items: center; 
-            padding: 20px;
-        }
-        #container { 
-            display: flex; 
-            align-items: flex-start; 
-            gap: 20px;
-            margin-top: 20px; 
-        }
-        #videoContainer {
-            position: relative;
-            width: 640px;
-            height: 480px;
-            border: 2px solid #333;
-            border-radius: 8px;
-            overflow: hidden;
-        }
-        #webcamVideo { 
-            display: block; 
-            width: 100%; 
-            height: 100%; 
-            transform: scaleX(-1);  /* Mirror view */
-            object-fit: cover;
-        }
-        #controls { 
-            display: flex; 
-            flex-direction: column; 
-            gap: 10px;
-        }
-        button { 
-            padding: 12px 24px;
-            font-size: 16px;
-            cursor: pointer;
-            background-color: #007bff;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            transition: background-color 0.2s;
-        }
-        button:hover {
-            background-color: #0056b3;
-        }
-        button:disabled {
-            background-color: #cccccc;
-            cursor: not-allowed;
-        }
-        #predictionResult { 
-            margin-top: 20px;
-            font-size: 1.2em;
-            font-weight: bold;
-            padding: 10px;
-            border-radius: 4px;
-            background-color: #f8f9fa;
-        }
-        #status { 
-            margin-top: 5px;
-            color: #666;
-        }
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; margin-top: 20px; background-color: #f0f0f0; }
+        #videoContainer { border: 2px solid #333; margin-bottom: 10px; background-color: #000; }
+        video { display: block; } /* Ensure video element doesn't add extra space */
+        canvas { display: none; } /* Hidden canvas for frame capture */
+        #controls button { padding: 10px 15px; font-size: 16px; margin: 5px; cursor: pointer; border: none; border-radius: 5px; }
+        #startButton { background-color: #4CAF50; color: white; }
+        #stopButton { background-color: #f44336; color: white; }
+        #predictionArea { margin-top: 20px; padding: 15px; background-color: white; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); min-width: 250px; text-align: center; }
+        #predictionText { font-size: 20px; font-weight: bold; color: #333; }
+        #confidenceText { font-size: 16px; color: #555; }
+        #status { margin-top: 10px; font-style: italic; color: #777; }
     </style>
 </head>
 <body>
-    <h1>ASL Greeting Recognition</h1>
-    <div id="container">
-        <div id="videoContainer">
-            <video id="webcamVideo" autoplay playsinline></video>
-        </div>
-        <div id="controls">
-            <button id="startButton">Start Recording</button>
-            <button id="stopButton" disabled>Stop Recording & Predict</button>
-            <div id="predictionResult">Prediction: ---</div>
-            <div id="status">Status: Initializing...</div>
-        </div>
+    <h1>ASL Sign Recognition</h1>
+
+    <div id="videoContainer">
+        <video id="webcam" width="640" height="480" autoplay playsinline></video>
+    </div>
+    <canvas id="canvas" width="640" height="480"></canvas>
+
+    <div id="controls">
+        <button id="startButton">Start Sign</button>
+        <button id="stopButton" disabled>Stop Sign & Predict</button>
     </div>
 
+    <div id="predictionArea">
+        <p id="predictionText">Prediction: ---</p>
+        <p id="confidenceText">Confidence: ---</p>
+    </div>
+    <p id="status">Status: Idle</p>
+
     <script>
-        const video = document.getElementById('webcamVideo');
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('canvas');
+        const context = canvas.getContext('2d');
         const startButton = document.getElementById('startButton');
         const stopButton = document.getElementById('stopButton');
-        const predictionResultDiv = document.getElementById('predictionResult');
-        const statusDiv = document.getElementById('status');
+        const predictionText = document.getElementById('predictionText');
+        const confidenceText = document.getElementById('confidenceText');
+        const statusText = document.getElementById('status');
 
-        let isRecording = false;
-        let recordedFrames = [];
-        let recordingInterval;
+        const NUM_FRAMES_TO_CAPTURE = 120; // Should match backend NUM_FRAMES
+        const FRAME_CAPTURE_INTERVAL_MS = 100; // Capture a frame every 100ms (10 FPS)
+                                               // Adjust for NUM_FRAMES_TO_CAPTURE * INTERVAL_MS = desired recording time
+                                               // e.g., 120 frames * 100ms = 12 seconds.
 
-        // Initialize webcam
-        async function initializeWebcam() {
+        let capturedFrames = [];
+        let captureIntervalId = null;
+        let stream = null;
+
+        async function setupWebcam() {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { 
-                        width: 640, 
-                        height: 480,
-                        facingMode: 'user'
-                    } 
-                });
+                stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
                 video.srcObject = stream;
-                statusDiv.textContent = 'Status: Ready to record';
+                statusText.textContent = 'Status: Webcam ready.';
                 startButton.disabled = false;
             } catch (err) {
-                console.error('Error accessing webcam:', err);
-                statusDiv.textContent = 'Error: Could not access webcam';
+                console.error("Error accessing webcam: ", err);
+                statusText.textContent = 'Error: Could not access webcam. Please check permissions.';
+                alert("Could not access webcam. Please ensure permissions are granted and no other app is using it.");
             }
         }
 
-        // Capture a frame from the video
-        function captureFrame() {
-            const canvas = document.createElement('canvas');
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            const ctx = canvas.getContext('2d');
-            
-            // Flip horizontally if needed (mirror effect)
-            ctx.translate(canvas.width, 0);
-            ctx.scale(-1, 1);
-            
-            ctx.drawImage(video, 0, 0);
-            return canvas.toDataURL('image/jpeg', 0.8);
-        }
-
-        // Start recording frames
-        function startRecording() {
-            isRecording = true;
-            recordedFrames = [];
+        function startCapture() {
+            if (!stream) {
+                alert("Webcam not started. Please allow access.");
+                return;
+            }
+            capturedFrames = [];
             startButton.disabled = true;
             stopButton.disabled = false;
-            statusDiv.textContent = 'Status: Recording...';
+            predictionText.textContent = 'Prediction: ---';
+            confidenceText.textContent = 'Confidence: ---';
+            statusText.textContent = `Status: Recording... (0/${NUM_FRAMES_TO_CAPTURE} frames)`;
 
-            // Capture frames at regular intervals (e.g., every 100ms)
-            recordingInterval = setInterval(() => {
-                if (recordedFrames.length < 120) { // Limit to 120 frames
-                    recordedFrames.push(captureFrame());
+            let frameCount = 0;
+            captureIntervalId = setInterval(() => {
+                if (frameCount < NUM_FRAMES_TO_CAPTURE) {
+                    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    const frameDataUrl = canvas.toDataURL('image/jpeg', 0.8); // Use JPEG for smaller size
+                    capturedFrames.push(frameDataUrl);
+                    frameCount++;
+                    statusText.textContent = `Status: Recording... (${frameCount}/${NUM_FRAMES_TO_CAPTURE} frames)`;
                 } else {
-                    stopRecording(); // Auto-stop when we have enough frames
+                    stopCaptureAndPredict(); // Automatically stop when enough frames are collected
                 }
-            }, 100); // 10 FPS
+            }, FRAME_CAPTURE_INTERVAL_MS);
         }
 
-        // Stop recording and send frames for prediction
-        async function stopRecording() {
-            isRecording = false;
-            clearInterval(recordingInterval);
-            startButton.disabled = false;
+        async function stopCaptureAndPredict() {
+            if (captureIntervalId) {
+                clearInterval(captureIntervalId);
+                captureIntervalId = null;
+            }
             stopButton.disabled = true;
-            statusDiv.textContent = 'Status: Processing...';
+            startButton.disabled = false; // Re-enable start for another try
+            statusText.textContent = 'Status: Processing...';
+
+            if (capturedFrames.length === 0) {
+                statusText.textContent = 'Status: No frames captured.';
+                return;
+            }
 
             try {
                 const response = await fetch('/predict', {
@@ -158,34 +115,45 @@
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ frames: recordedFrames })
+                    body: JSON.stringify({ frames: capturedFrames })
                 });
 
                 if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
                 }
 
                 const result = await response.json();
-                if (result.error) {
-                    throw new Error(result.error);
-                }
-
-                predictionResultDiv.textContent = `Prediction: ${result.prediction} (${(result.confidence * 100).toFixed(1)}%)`;
-                statusDiv.textContent = 'Status: Ready to record';
+                predictionText.textContent = `Prediction: ${result.prediction}`;
+                confidenceText.textContent = `Confidence: ${result.confidence}`;
+                statusText.textContent = 'Status: Prediction complete.';
 
             } catch (error) {
-                console.error('Error:', error);
-                statusDiv.textContent = `Error: ${error.message}`;
-                predictionResultDiv.textContent = 'Prediction: Error occurred';
+                console.error('Error sending frames for prediction:', error);
+                predictionText.textContent = 'Prediction: Error';
+                confidenceText.textContent = `Details: ${error.message}`;
+                statusText.textContent = 'Status: Error during prediction.';
+            } finally {
+                capturedFrames = []; // Clear frames for next attempt
             }
         }
 
-        // Event listeners
-        startButton.addEventListener('click', startRecording);
-        stopButton.addEventListener('click', stopRecording);
+        startButton.addEventListener('click', startCapture);
+        stopButton.addEventListener('click', stopCaptureAndPredict);
 
-        // Initialize webcam when page loads
-        initializeWebcam();
+        // Initialize webcam on page load
+        window.addEventListener('load', setupWebcam);
+
+        // Optional: Stop webcam stream when page is closed/unloaded
+        window.addEventListener('beforeunload', () => {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+            if (captureIntervalId) {
+                clearInterval(captureIntervalId);
+            }
+        });
+
     </script>
 </body>
 </html>
