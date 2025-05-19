@@ -17,8 +17,7 @@ FEATURES_PER_FRAME = (POSE_LANDMARKS + 2 * HAND_LANDMARKS) * 2
 
 # Inverse map for predictions (ensure this matches your training labels)
 # This should correspond to the label_map used during training.
-# If pipeline.classes_ is available, that's the most reliable source
-# after loading the pipeline. For now, we define it based on your example.
+
 INV_LABEL_MAP = {
     0: "alright",
     1: "goodafternoon",
@@ -28,7 +27,7 @@ INV_LABEL_MAP = {
 }
 
 # --- Load the trained pipeline ---
-PIPELINE_PATH = "asl_pipeline_mediapipe2.joblib"  # Or your full path
+PIPELINE_PATH = "asl_pipeline_mediapipe3.joblib"  
 if not os.path.exists(PIPELINE_PATH):
     raise FileNotFoundError(
         f"Pipeline file not found at {PIPELINE_PATH}. "
@@ -36,7 +35,7 @@ if not os.path.exists(PIPELINE_PATH):
     )
 pipeline = joblib.load(PIPELINE_PATH)
 
-# --- MediaPipe Holistic Initialization (same as training) ---
+# --- MediaPipe Holistic Initialization  ---
 mp_holistic = mp.solutions.holistic
 holistic = mp_holistic.Holistic(
     static_image_mode=False,  # Process video stream
@@ -189,4 +188,4 @@ def predict():
 
 if __name__ == "__main__":
     # When deploying, use a production WSGI server like Gunicorn or Waitress
-    app.run(host="0.0.0.0", port=5000, debug=True) # Debug=False for production
+    app.run(host="0.0.0.0", port=8000, debug=True) # Debug=False for production
