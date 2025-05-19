@@ -1,0 +1,11 @@
+flask 
+flask-socketio 
+opencv-python-headless
+joblib
+scikit-learn
+xgboost
+numpy
+mediapipe
+threadpoolctl
+scipy
+setuptools
