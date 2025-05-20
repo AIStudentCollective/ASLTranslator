@@ -2,3 +2,6 @@ xgboost_inference/asl_pipeline.joblib
 xgboost_inference/xgb_booster.json
 Greetings/
 .venv/
+node_modules/
+package-lock.json
+package.json

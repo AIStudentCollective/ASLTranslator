@@ -22,8 +22,9 @@ export default function Webcam() {
       }
     });
 
-    return () => 
+    return () => {
       socketInstance.disconnect();
+    };
   }, []);
 
   // Access webcam
