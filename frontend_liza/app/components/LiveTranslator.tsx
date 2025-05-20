@@ -19,6 +19,16 @@ const LiveTranslator: React.FC = () => {
 
   const frameInterval = 100; // 10 FPS
 
+  // Function to reset the letter buffer
+  const handleResetBuffer = () => {
+    setLetterBuffer('');
+  };
+
+  // Function to add a space to the letter buffer
+  const handleAddSpace = () => {
+    setLetterBuffer(prevBuffer => prevBuffer + ' ');
+  };
+
   useEffect(() => {
     // Initialize Socket.IO connection
     // Make sure your Flask server is running and accessible at this URL
@@ -177,9 +187,24 @@ const LiveTranslator: React.FC = () => {
       </div>
 
       {/* Prediction overlay - styled as in Webcam.tsx */}
-      {/* Display error message here if present, otherwise display prediction */}
       <div className="absolute bottom-20 left-1/2 -translate-x-1/2 text-lg font-bold bg-black/60 px-4 py-2 rounded-md">
         {error ? `Error: ${error}` : prediction}
+      </div>
+
+      {/* Buttons for Reset and Space */}
+      <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex gap-4">
+        <button 
+          onClick={handleAddSpace}
+          className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-colors duration-150 ease-in-out"
+        >
+          Space
+        </button>
+        <button 
+          onClick={handleResetBuffer}
+          className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-colors duration-150 ease-in-out"
+        >
+          Reset
+        </button>
       </div>
 
       {/* Footer info from Webcam.tsx - Placeholder, functionality can be added if needed */}
