@@ -16,8 +16,11 @@ const LiveTranslator: React.FC = () => {
   const lastFrameTimeRef = useRef<number>(0);
   const lastGestureRef = useRef<string>('');
   const lastUpdateTimeRef = useRef<number>(0);
+  const lastBufferedLetterRef = useRef<string>('');
+  const lastBufferAppendTimeRef = useRef<number>(0);
 
   const frameInterval = 100; // 10 FPS
+  const BUFFER_APPEND_COOLDOWN = 700; // Milliseconds (0.7 seconds)
 
   // Function to reset the letter buffer
   const handleResetBuffer = () => {
@@ -54,24 +57,33 @@ const LiveTranslator: React.FC = () => {
     socketRef.current.on('prediction', (data: PredictionData) => {
       if (data.error) {
         console.error('Backend error:', data.error);
-        setError(data.error); // Store only the error message
-        // setPrediction('Error processing frame'); // Optionally update main prediction display
+        setError(data.error);
       } else if (data.gesture) {
-        const now = Date.now();
-        // Logic for updating the main prediction display (current sign)
-        if (data.gesture !== lastGestureRef.current || now - lastUpdateTimeRef.current > 500) {
-          setPrediction(`Gesture: ${data.gesture}`); // Update the main prediction display
+        const currentTime = Date.now();
 
-          // Append to buffer only if it's a new, different, valid letter (single uppercase)
-          // and not a status message like "No hand detected"
-          if (data.gesture.match(/^[A-Z]$/) && data.gesture !== lastGestureRef.current) {
-            setLetterBuffer(prevBuffer => prevBuffer + data.gesture);
-          }
-          
+        // Logic for updating the main prediction display (current sign)
+        if (data.gesture !== lastGestureRef.current || currentTime - lastUpdateTimeRef.current > 500) {
+          setPrediction(`Gesture: ${data.gesture}`);
           lastGestureRef.current = data.gesture;
-          lastUpdateTimeRef.current = now;
+          lastUpdateTimeRef.current = currentTime;
         }
-        setError(null); // Clear previous errors if a valid gesture is received
+
+        // Logic for appending to the letterBuffer
+        // Append only if:
+        // 1. It's a single uppercase letter
+        // 2. It's different from the last letter *actually buffered*
+        // 3. Enough time has passed since the last buffer append
+        if (
+          data.gesture.match(/^[A-Z]$/) &&
+          data.gesture !== lastBufferedLetterRef.current &&
+          currentTime - lastBufferAppendTimeRef.current > BUFFER_APPEND_COOLDOWN
+        ) {
+          setLetterBuffer(prevBuffer => prevBuffer + data.gesture);
+          lastBufferedLetterRef.current = data.gesture;
+          lastBufferAppendTimeRef.current = currentTime;
+        }
+        
+        setError(null);
       }
     });
 
